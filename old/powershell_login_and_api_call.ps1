@@ -2,7 +2,7 @@
 $url = 'https://www.nordnet.dk/logind'
 $r1 = iwr $url -SessionVariable cookies
 
-$body = @{'username'=''; 'password'=''}
+$body = @{'username'='bear85'; 'password'='!'}
 $headers = @{'Accept' = '*/*'; 'client-id' = 'NEXT'; 'sub-client-id' = 'NEXT'}
   
 $url = 'https://www.nordnet.dk/api/2/authentication/basic/login'
