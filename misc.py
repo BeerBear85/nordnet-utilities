@@ -1,7 +1,10 @@
 import requests
+import pandas as pd
 
 # Login to Nordnet
-def login(session, user, password):
+def login(user, password):
+    session = requests.Session() # create a session object
+
     # Setting cookies prior to login by visiting login page
     url = 'https://www.nordnet.dk/logind'
     session.get(url)
@@ -41,3 +44,50 @@ def get_stock_id(session, stock_ticker):
         exit(-1)
     number = results[0]['instrument_info']['instrument_id']
     return number
+
+# Get list of stocks in account
+def get_account_stocks(session, account):
+    url = 'https://www.nordnet.dk/api/2/accounts'
+    accounts = session.get(url)
+    accounts = accounts.json()
+    for acc in accounts:
+        if acc['alias'] == account:
+            account_id = acc['accno']
+            break
+        #if account is not found
+        if acc == accounts[-1]: #if last account in list
+            print(f'Account {account} not found. Please check your account name.')
+            exit(-1)
+    #Extract info of available cash in account
+    url = f'https://www.nordnet.dk/api/2/accounts/{account_id}/info'
+    account_info_list = session.get(url)
+    account_info_list = account_info_list.json()
+    account_info = account_info_list[0]
+    account_dict = {'market_value': account_info['full_marketvalue']['value'], #stock value
+                    'account_sum': account_info['account_sum']['value'], #cash
+                    'total_value': account_info['own_capital']['value'] #total value
+                    }
+    account_dataframe = pd.DataFrame(account_dict, index=[0])
+    print(account_dataframe)
+
+    url = f'https://www.nordnet.dk/api/2/accounts/{account_id}/positions'
+    positions = session.get(url)
+    positions = positions.json()
+    pos_dict_list = []
+    for pos in positions:
+        pos_dict = {'symbol': pos['instrument']['symbol'], 
+                    'id': pos['instrument']['instrument_id'],
+                    'currency': pos['instrument']['currency'],
+                    'qty': pos['qty'], 
+                    'stock_price': pos['main_market_price']['value'], #in instrument currency
+                    'sum_price_local': pos['market_value_acc']['value'], #in DKK (account currency)
+                    }
+        #calculate the procentage of the total value of the account
+        pos_dict['percent'] = pos_dict['sum_price_local']/account_dict['total_value']*100
+        pos_dict_list.append(pos_dict)
+    pos_dataframe = pd.DataFrame(pos_dict_list)
+    print(pos_dataframe)
+
+    return pos_dataframe
+
+
