@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+import xlsxwriter
 
 # Login to Nordnet
 def login(user, password):
@@ -26,7 +27,7 @@ def login(user, password):
         exit(-1)
 
 #Get info df for stock from Stock Ticker Symbols
-def get_stock_info(session, stock_ticker):
+def get_stock_info(session, stock_ticker, stock_exchange_country = 'DK'):
     # Set NEXT cookie and header
     url = 'https://www.nordnet.dk/markedet'
     session.get(url)
@@ -43,10 +44,13 @@ def get_stock_info(session, stock_ticker):
     # check all results for exact match
     result_list = []
     for result in results:
-        if result['instrument_info']['symbol'] == stock_ticker:
+        if result['instrument_info']['symbol'] == stock_ticker and result['exchange_info']['exchange_country'] == stock_exchange_country:
             result_list.append(result)
     if len(result_list) > 1: #Don't want more than one result with the same stock ticker
         print(f'Found more than one result for {stock_ticker}. Please specify a more unique search term.')
+        print('The following ticker and name were found:')
+        for result in result_list:
+            print(result['instrument_info']['symbol'], result['instrument_info']['name'])
         exit(-1)
     result = result_list[0]
     result_dict = {'symbol': result['instrument_info']['symbol'],
@@ -100,7 +104,7 @@ def get_account_stocks(session, account_alias):
                     'sum_price_local': pos['market_value_acc']['value'], #in DKK (account currency)
                     }
         #calculate the procentage of the total value of the account
-        pos_dict['percent'] = pos_dict['sum_price_local']/account_dict['total_value']*100
+        pos_dict['Weight'] = pos_dict['sum_price_local']/account_dict['total_value']
         pos_dict_list.append(pos_dict)
     pos_dataframe = pd.DataFrame(pos_dict_list)
 
@@ -112,21 +116,80 @@ def read_pdf_report(file):
     # make dummy dataframe for now
     df = pd.DataFrame(columns=['Company', 'Ticker', 'Sector', 'Weight', 'Change'])
     #insert data into dummy dataframe
-    df.loc[0] = ['Tomra Systems', 'TOM', 'Industrials', '6%', '-1%']
-    df.loc[1] = ['Meta company', 'META', 'Tech', '5%', '1%']
-    df.loc[1] = ['Alphabet', 'GOOG', 'Tech', '8%', '-2%']
+    df.loc[0] = ['TOMRA SYSTEMS', 'TOM.NO', 'Industrials', '6%', '-1%']
+    df.loc[1] = ['Meta Platforms A', 'META.US', 'Tech', '5%', '1%']
+    df.loc[2] = ['Alphabet C', 'GOOG.US', 'Tech', '8%', '-2%']
+
+    # Divide the ticker into ticker and exchange (using the "." as a separator)
+    df[['Ticker', 'Exchange']] = df['Ticker'].str.split('.', expand=True)
+
+    # Convert the weight to decimal and the change to float
+    df['Weight'] = df['Weight'].str.replace('%', '').astype(float)/100
+    df['Change'] = df['Change'].str.replace('%', '').astype(float)/100
+
     return df
 
 # Method for generating a dataframe with the corrections to be made to the account portfolio
+#The correction is a list of dictornaries with the following keys:
+#name, ticker, current procent, target procent, current value [DKK], 
+# target value[DKK], diff value [DKK], stock price [DKK], current qty, target qty, diff qty
 def generate_account_corrections(session, report_df, account_df):
 
-    # read the report dataframe Ticker column
-    report_tickers = report_df['Ticker'].tolist()
+    correction_dict_list = []
 
-    for ticker in report_tickers:
-        stock_info = get_stock_info(session, ticker)
-        price_in_account_currency = convert_to_account_currency(session, stock_info['price'], stock_info['currency'])
-        print(stock_info)
+    #itereate through the report dataframe
+    for index, row in report_df.iterrows():
+        #get the stock info from the report using the ticker
+        stock_info = get_stock_info(session, row['Ticker'], row['Exchange'])
+
+        #get the stock price in the account currency
+        stock_price_in_account_currency = convert_to_account_currency(session, stock_info['price'], stock_info['currency'])
+        # check if the stock is already in the account, and the current procentage, price and quantity
+        if row['Ticker'] in account_df['symbol'].values:
+            current_procent = account_df.loc[account_df['symbol'] == row['Ticker'], 'Weight'].iloc[0]
+            current_procent = round(current_procent, 1) # round to 1 decimals
+            current_value = account_df.loc[account_df['symbol'] == row['Ticker'], 'sum_price_local'].iloc[0]
+            current_value = round(current_value, 2) # round to 2 decimals
+            current_qty = account_df.loc[account_df['symbol'] == row['Ticker'], 'qty'].iloc[0]
+            current_qty = round(current_qty, 1) # round to 1 decimals
+
+        else:
+            current_procent = 0.0
+            current_value = 0.0
+            current_qty = 0.0
+        
+        #calculate the target value
+        target_value = row['Weight'] * account_dict['total_value']
+        target_value = round(target_value, 2)  # round to 2 decimals
+        #calculate the difference between the target and current value
+        diff_value = target_value - current_value
+        #calculate the target quantity
+        target_qty = round(diff_value/stock_price_in_account_currency, 1)
+        #calculate the difference between the target and current quantity
+        diff_qty = target_qty - current_qty
+
+        #check that the name in the report is the same as the name in the stock_info
+        if row['Company'] != stock_info['name']:
+            print(f'Warning: the name of the stock in the report ({row["Company"]}) is not the same as the name in the stock info ({stock_info["name"]}).')
+
+        correction_dict = {'name': row['Company'],
+                           'ticker': row['Ticker'],
+                           'current_procent': current_procent,
+                           'target_procent': row['Weight'],
+                           'current_value': current_value,
+                           'target_value': target_value,
+                           'diff_value': diff_value,
+                           'stock_price': stock_price_in_account_currency,
+                           'current_qty': current_qty,
+                           'target_qty': target_qty,
+                           'diff_qty': diff_qty
+                           }
+        correction_dict_list.append(correction_dict) #add the dictionary to the list
+
+    # Convert the list of dictionaries to a dataframe
+    df = pd.DataFrame(correction_dict_list)
+    print(df)
+    return df
     
 
 def convert_to_account_currency(session, amount, currency):
@@ -154,6 +217,20 @@ def convert_to_account_currency(session, amount, currency):
             exit(-1)
     conversion_rate = currency['price_info']['last']['price']
     amount_in_account_currency = amount*conversion_rate
-    return amount_in_account_currency
+    return round(amount_in_account_currency, 2)
 
-
+# Export the correction DF to an excel file, with columns width set to the max width of the content
+def export_to_excel(df):
+    #Export the correction DF to an excel file, with columns width set to the max width of the content
+    writer = pd.ExcelWriter('corrections.xlsx', engine='xlsxwriter')
+    df.to_excel(writer, sheet_name='Sheet1', index=False)
+    workbook = writer.book
+    worksheet = writer.sheets['Sheet1']
+    for idx, col in enumerate(df):  # loop through all columns
+        series = df[col]
+        max_len = max((
+            series.astype(str).map(len).max(),  # len of largest item
+            len(str(series.name))  # len of column name/header
+        )) + 2  # adding a little extra space
+        worksheet.set_column(idx, idx, max_len)  # set column width
+    writer.close()
