@@ -1,6 +1,8 @@
 import requests
 import pandas as pd
 import xlsxwriter
+import camelot
+
 
 # Login to Nordnet
 def login(user, password):
@@ -23,8 +25,21 @@ def login(user, password):
     else:
         print(f'Login to Nordnet failed with status code {login.status_code}. The response was:')
         print(login.text)
-        print('Please check that you have correctly set up nordnet_configuration.py and enabled username/password logins on Nordnet')
         exit(-1)
+
+# Logout from Nordnet
+def logout(session):
+    url = 'https://www.nordnet.dk/api/2/authentication/basic/login'
+    logout = session.delete(url)
+    logout.close()
+    # # Success
+    # if logout.status_code == 200:
+    #     return session
+    # else:
+    #     print(f'Log out of Nordnet failed with status code {logout.status_code}. The response was:')
+    #     print(logout.text)
+    #     exit(-1)
+
 
 #Get info df for stock from Stock Ticker Symbols
 def get_stock_info(session, stock_ticker, stock_exchange_country = 'DK'):
@@ -93,6 +108,10 @@ def get_account_stocks(session, account_alias):
 
     url = f'https://www.nordnet.dk/api/2/accounts/{account_dict["account_id"]}/positions'
     positions = session.get(url)
+    if positions.status_code == 204: #handle empty account
+        #create and return empty dataframe
+        pos_dataframe = pd.DataFrame(columns=['symbol', 'id', 'currency', 'qty', 'stock_price', 'sum_price_local', 'Weight'])
+        return pos_dataframe
     positions = positions.json()
     pos_dict_list = []
     for pos in positions:
@@ -113,21 +132,62 @@ def get_account_stocks(session, account_alias):
 # Method for reading the monthly pdf report from Nordnet
 def read_pdf_report(file):
 
-    # make dummy dataframe for now
-    df = pd.DataFrame(columns=['Company', 'Ticker', 'Sector', 'Weight', 'Change'])
-    #insert data into dummy dataframe
-    df.loc[0] = ['TOMRA SYSTEMS', 'TOM.NO', 'Industrials', '6%', '-1%']
-    df.loc[1] = ['Meta Platforms A', 'META.US', 'Tech', '5%', '1%']
-    df.loc[2] = ['Alphabet C', 'GOOG.US', 'Tech', '8%', '-2%']
+    # # dummy dataframe:
+    # df = pd.DataFrame(columns=['Company', 'Ticker', 'Sector', 'Weight', 'Change'])
+    # #insert data into dummy dataframe
+    # df.loc[0] = ['TOMRA SYSTEMS', 'TOM.NO', 'Industrials', '6%', '-1%']
+    # df.loc[1] = ['Meta Platforms A', 'META.US', 'Tech', '5%', '1%']
+    # df.loc[2] = ['Alphabet C', 'GOOG.US', 'Tech', '8%', '-2%']
 
-    # Divide the ticker into ticker and exchange (using the "." as a separator)
-    df[['Ticker', 'Exchange']] = df['Ticker'].str.split('.', expand=True)
+    # Read the data from the pdf file
+    tables = camelot.read_pdf(file, pages='1-end', flavor='stream')
 
-    # Convert the weight to decimal and the change to float
-    df['Weight'] = df['Weight'].str.replace('%', '').astype(float)/100
-    df['Change'] = df['Change'].str.replace('%', '').astype(float)/100
+    # Extract the data from the tables
+    df_list = []
+    for table in tables:
+        df_list.append(table.df)
 
-    return df
+    #Only keep the tables with index 0 and 3
+    #We know that the tables with index 0 and 3 contains the data we want
+    df_list = [df_list[0], df_list[3]]
+
+    column_name_translation = {'Selskab og handelslink': 'Company',
+                               'Ticker': 'Ticker',
+                               'Sektor': 'Sector',
+                               'Aktuel vægt': 'Weight',
+                               'Ændring': 'Change'}
+    
+    new_df_list = []
+    for df in df_list:
+        # Remove the first 2 rows of each dataframe (don't contain any data)
+        df.drop(df.index[:2], inplace=True)
+        # And use the first row as the header before dropping it
+        df.columns = df.iloc[0] 
+        df.drop(df.index[0], inplace=True)
+        #reset the index
+        df.reset_index(drop=True, inplace=True) 
+        # Rename the columns
+        df.rename(columns=column_name_translation, inplace=True)
+        #If the value of the colum 'Change' is 'Ny!', then set the value equal to same as the value in the 'Weight' column
+        df.loc[df['Change'] == 'Ny!', 'Change'] = df['Weight']
+        
+        # Divide the ticker into ticker and exchange (using the "." as a separator)
+        df[['Ticker', 'Exchange']] = df['Ticker'].str.split('.', expand=True)
+        # Translate from city code to country code
+        exchange_translation = {'HE': 'FI', 
+                                'OL': 'NO',
+                                'CO': 'DK',
+                                'ST': 'SE',
+                                'US': 'US',}
+        df['Exchange'] = df['Exchange'].map(exchange_translation)
+
+        # Convert the weight to decimal and the change to float
+        df['Weight'] = df['Weight'].str.replace('%', '').astype(float)/100
+        df['Change'] = df['Change'].str.replace('%', '').astype(float)/100
+
+        new_df_list.append(df)
+    return new_df_list[1] #return the dataframe with the nordic stock info
+
 
 # Method for generating a dataframe with the corrections to be made to the account portfolio
 #The correction is a list of dictornaries with the following keys:
@@ -195,6 +255,8 @@ def generate_account_corrections(session, report_df, account_df):
 def convert_to_account_currency(session, amount, currency):
 
     account_currency = account_dict['currency']
+    if currency == account_currency:
+        return round(amount, 2)
     currency_convert_string = f'{currency}/{account_currency}'
 
     # Set NEXT cookie and header
