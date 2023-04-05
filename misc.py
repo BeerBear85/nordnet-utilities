@@ -224,7 +224,7 @@ def generate_account_corrections(session, report_df, account_df):
         #calculate the difference between the target and current value
         diff_value = target_value - current_value
         #calculate the target quantity
-        target_qty = round(diff_value/stock_price_in_account_currency, 1)
+        target_qty = round(target_value/stock_price_in_account_currency, 1)
         #calculate the difference between the target and current quantity
         diff_qty = target_qty - current_qty
 
@@ -295,4 +295,16 @@ def export_to_excel(df):
             len(str(series.name))  # len of column name/header
         )) + 2  # adding a little extra space
         worksheet.set_column(idx, idx, max_len)  # set column width
+    # if value of diff_value is above absolut 1000, color the cell red
+    format1 = workbook.add_format({'bg_color': '#FFC7CE',
+                                    'font_color': '#9C0006'})
+    worksheet.conditional_format('G2:G1000', {'type': 'cell',
+                                            'criteria': '>=',
+                                            'value': 1000,
+                                            'format': format1})
+    worksheet.conditional_format('G2:G1000', {'type': 'cell',
+                                            'criteria': '<=',
+                                            'value': -1000,
+                                            'format': format1})
+    
     writer.close()
