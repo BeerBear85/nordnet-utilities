@@ -1,7 +1,8 @@
 import requests
 import pandas as pd
 import xlsxwriter
-import camelot
+#import camelot
+import camelot.io as camelot
 
 
 # Login to Nordnet
