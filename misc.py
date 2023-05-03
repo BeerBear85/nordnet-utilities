@@ -44,6 +44,9 @@ def logout(session):
 
 #Get info df for stock from Stock Ticker Symbols
 def get_stock_info(session, stock_ticker, stock_exchange_country = 'DK'):
+    # Replace and '-' with ' ' in stock ticker (to match Nordnet's format)
+    stock_ticker = stock_ticker.replace('-', ' ')
+
     # Set NEXT cookie and header
     url = 'https://www.nordnet.dk/markedet'
     session.get(url)
@@ -146,11 +149,10 @@ def read_pdf_report(file):
     # Extract the data from the tables
     df_list = []
     for table in tables:
-        df_list.append(table.df)
+        #only use tables containing the pharse 'Selskab og handelslink'
+        if 'Selskab og handelslink' in table.df.values:
+            df_list.append(table.df)
 
-    #Only keep the tables with index 0 and 3
-    #We know that the tables with index 0 and 3 contains the data we want
-    df_list = [df_list[0], df_list[3]]
 
     column_name_translation = {'Selskab og handelslink': 'Company',
                                'Ticker': 'Ticker',
@@ -296,16 +298,17 @@ def export_to_excel(df):
             len(str(series.name))  # len of column name/header
         )) + 2  # adding a little extra space
         worksheet.set_column(idx, idx, max_len)  # set column width
-    # if value of diff_value is above absolut 1000, color the cell red
+    # if value of diff_value is above absolut threashold, color the cell red
+    threshold = 2000
     format1 = workbook.add_format({'bg_color': '#FFC7CE',
                                     'font_color': '#9C0006'})
     worksheet.conditional_format('G2:G1000', {'type': 'cell',
                                             'criteria': '>=',
-                                            'value': 1000,
+                                            'value': threshold,
                                             'format': format1})
     worksheet.conditional_format('G2:G1000', {'type': 'cell',
                                             'criteria': '<=',
-                                            'value': -1000,
+                                            'value': -threshold,
                                             'format': format1})
     
     writer.close()
