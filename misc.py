@@ -44,8 +44,6 @@ def logout(session):
 
 #Get info df for stock from Stock Ticker Symbols
 def get_stock_info(session, stock_ticker, stock_exchange_country = 'DK'):
-    # Replace and '-' with ' ' in stock ticker (to match Nordnet's format)
-    stock_ticker = stock_ticker.replace('-', ' ')
 
     # Set NEXT cookie and header
     url = 'https://www.nordnet.dk/markedet'
@@ -176,6 +174,10 @@ def read_pdf_report(file):
         
         # Divide the ticker into ticker and exchange (using the "." as a separator)
         df[['Ticker', 'Exchange']] = df['Ticker'].str.split('.', expand=True)
+        
+        # Replace and '-' with ' ' in stock ticker (to match Nordnet's format)
+        df['Ticker'] = df['Ticker'].str.replace('-', ' ')
+
         # Translate from city code to country code
         exchange_translation = {'HE': 'FI', 
                                 'OL': 'NO',
@@ -187,6 +189,8 @@ def read_pdf_report(file):
         # Convert the weight to decimal and the change to float
         df['Weight'] = df['Weight'].str.replace('%', '').astype(float)/100
         df['Change'] = df['Change'].str.replace('%', '').astype(float)/100
+
+
 
         new_df_list.append(df)
     return new_df_list[1] #return the dataframe with the nordic stock info
@@ -232,8 +236,8 @@ def generate_account_corrections(session, report_df, account_df):
         diff_qty = target_qty - current_qty
 
         #check that the name in the report is the same as the name in the stock_info
-        if row['Company'] != stock_info['name']:
-            print(f'Warning: the name of the stock in the report ({row["Company"]}) is not the same as the name in the stock info ({stock_info["name"]}).')
+        #if row['Company'] != stock_info['name']:
+        #    print(f'Warning: the name of the stock in the report ({row["Company"]}) is not the same as the name in the stock info ({stock_info["name"]}).')
 
         correction_dict = {'name': row['Company'],
                            'ticker': row['Ticker'],
